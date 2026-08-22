@@ -1,0 +1,52 @@
+services:
+
+  fleet-tracker-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: fleet-tracker-dev
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "2345:2345"       # Delve debugger port
+    volumes:
+      - .:/app            # mount source for live reload
+      - ./certs:/certs:ro
+      - go-pkg-cache:/root/go/pkg   # cache go modules
+    environment:
+      # ── MQTT ──────────────────────────────────────────────
+      MQTT_BROKER:         "${MQTT_BROKER}"
+      MQTT_USERNAME:       "${MQTT_USERNAME}"
+      MQTT_PASSWORD:       "${MQTT_PASSWORD}"
+      MQTT_CLIENT_ID:      "fleet-tracker-dev"
+      MQTT_TOPIC_PATTERN:  "fleet/gps"
+      MQTT_QOS:            "0"
+      MQTT_TLS_CA_CERT:    "/certs/root.crt"
+      MQTT_KEEPALIVE:      "30s"
+      MQTT_RECONNECT_WAIT: "5s"
+      MQTT_DEFAULT_BUS_ID: "BUS-001"   
+      
+      KAFKA_TOPIC:   "iot-telemetry"
+
+      # ── HTTP ──────────────────────────────────────────────
+      HTTP_LISTEN_ADDR: ":8080"
+
+      GOPROXY: "https://goproxy.io,direct"
+      GOSUMDB: "off"
+
+      # ── Logging ───────────────────────────────────────────
+      LOG_LEVEL:  "debug"
+      LOG_PRETTY: "true"
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux support
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  go-pkg-cache:
