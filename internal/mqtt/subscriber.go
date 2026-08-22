@@ -27,10 +27,6 @@ type Subscriber struct {
 }
 
 func NewSubscriber(cfg config.MQTTConfig, handler EventHandler, log zerolog.Logger) (*Subscriber, error) {
-	tlsCfg, err := buildTLS(cfg.TLSCACertPath)
-	if err != nil {
-		return nil, fmt.Errorf("mqtt: build TLS: %w", err)
-	}
 	s := &Subscriber{cfg: cfg, handler: handler,
 		log: log.With().Str("component", "mqtt").Logger()}
 
@@ -39,13 +35,22 @@ func NewSubscriber(cfg config.MQTTConfig, handler EventHandler, log zerolog.Logg
 		SetClientID(cfg.ClientID).
 		SetUsername(cfg.Username).
 		SetPassword(cfg.Password).
-		SetTLSConfig(tlsCfg).
 		SetKeepAlive(cfg.KeepAlive).
 		SetCleanSession(false).
 		SetAutoReconnect(true).
 		SetMaxReconnectInterval(cfg.ReconnectWait).
 		SetOnConnectHandler(s.onConnect).
 		SetConnectionLostHandler(s.onConnectionLost)
+
+	// TLS only applies to "tls://" or "ssl://" brokers. A plain "tcp://"
+	// broker (e.g. local Mosquitto/EMQX in dev, no cert available) skips it.
+	if strings.HasPrefix(cfg.Broker, "tls://") || strings.HasPrefix(cfg.Broker, "ssl://") {
+		tlsCfg, err := buildTLS(cfg.TLSCACertPath)
+		if err != nil {
+			return nil, fmt.Errorf("mqtt: build TLS: %w", err)
+		}
+		opts.SetTLSConfig(tlsCfg)
+	}
 
 	s.client = pahomqtt.NewClient(opts)
 	return s, nil
@@ -83,11 +88,12 @@ func (s *Subscriber) onConnectionLost(_ pahomqtt.Client, err error) {
 }
 
 func (s *Subscriber) messageHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
-	busID, err := busIDFromTopic(msg.Topic())
-	if err != nil {
-		s.log.Warn().Str("topic", msg.Topic()).Msg("unexpected topic – skipped")
-		return
-	}
+	// NOTE: the current topic (e.g. "fleet/gps") carries no bus/device id,
+	// so every message is attributed to cfg.DefaultBusID for now.
+	// TODO: switch back to per-bus identification once the topic is
+	// "fleet/{busID}/gps" again, or the payload carries a bus/device id.
+	busID := s.cfg.DefaultBusID
+
 	var p model.GPSPayload
 	if err := json.Unmarshal(msg.Payload(), &p); err != nil {
 		s.log.Error().Err(err).Str("bus_id", busID).Msg("JSON decode failed")
@@ -101,17 +107,10 @@ func (s *Subscriber) messageHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
 		BusID: busID, Lat: p.Lat, Lng: p.Lng,
 		SpeedKmh: p.Spd, AltM: p.Alt,
 		Satellites: p.Sat, HDOP: p.HDOP,
-		Fix: p.Fix, ReceivedAt: time.Now().UTC(),
+		Fix: p.Fix, SeatOccupied: p.SeatOccupied,
+		DeviceTs: p.Ts, ReceivedAt: time.Now().UTC(),
 	}
 	s.handler(context.Background(), ev)
-}
-
-func busIDFromTopic(topic string) (string, error) {
-	parts := strings.Split(topic, "/")
-	if len(parts) != 3 || parts[0] != "fleet" || parts[2] != "gps" {
-		return "", fmt.Errorf("unexpected topic: %s", topic)
-	}
-	return parts[1], nil
 }
 
 func buildTLS(caCertPath string) (*tls.Config, error) {

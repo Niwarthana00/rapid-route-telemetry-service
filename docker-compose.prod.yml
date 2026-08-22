@@ -1,0 +1,85 @@
+services:
+
+  fleet-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_VERSION: "${BUILD_VERSION:-latest}"
+    image: fleet-tracker-service:${BUILD_VERSION:-latest}
+    container_name: fleet-tracker
+    restart: unless-stopped
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      - ./certs:/certs:ro
+
+    environment:
+      # ── MQTT ──────────────────────────────────────────────
+      MQTT_BROKER:         "${MQTT_BROKER}"
+      MQTT_USERNAME:       "${MQTT_USERNAME}"
+      MQTT_PASSWORD:       "${MQTT_PASSWORD}"
+      MQTT_CLIENT_ID:      "fleet-tracker-prod-${HOSTNAME}"
+      MQTT_TOPIC_PATTERN:  "${MQTT_TOPIC_PATTERN:-fleet/gps}"
+      MQTT_QOS:            "${MQTT_QOS:-0}"
+      MQTT_TLS_CA_CERT:    "/certs/root.crt"
+      MQTT_KEEPALIVE:      "${MQTT_KEEPALIVE:-30s}"
+      MQTT_RECONNECT_WAIT: "${MQTT_RECONNECT_WAIT:-5s}"
+      MQTT_DEFAULT_BUS_ID: "${MQTT_DEFAULT_BUS_ID:-BUS-001}"   
+      # ── Kafka ─────────────────────────────────────────────
+      KAFKA_BROKER: "${KAFKA_BROKER}"
+      KAFKA_TOPIC:  "${KAFKA_TOPIC:-iot-telemetry}"
+
+      # ── HTTP ──────────────────────────────────────────────
+      HTTP_LISTEN_ADDR: ":8080"
+
+      # ── Logging ───────────────────────────────────────────
+      LOG_LEVEL:  "${LOG_LEVEL:-info}"
+      LOG_PRETTY: "false"
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+        reservations:
+          cpus: "0.10"
+          memory: 32M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 60s
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service=fleet-tracker"
+
+    networks:
+      - kafka-network       # shared with Kafka repo stack
+      - internal
+
+    labels:
+      com.fleet-tracker.service:     "fleet-tracker"
+      com.fleet-tracker.version:     "${BUILD_VERSION:-latest}"
+      com.fleet-tracker.environment: "production"
+
+networks:
+  kafka-network:
+    external: true           # created by the Kafka repo compose stack
+    name: "${KAFKA_NETWORK_NAME:-kafka-network}"
+  internal:
+    driver: bridge
+    internal: true

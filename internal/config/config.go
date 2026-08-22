@@ -24,6 +24,10 @@ type MQTTConfig struct {
 	KeepAlive     time.Duration
 	TLSCACertPath string
 	ReconnectWait time.Duration
+	// DefaultBusID is used while the topic carries no bus/device identifier
+	// (e.g. a flat "fleet/gps" topic instead of "fleet/{busID}/gps").
+	// TODO: remove once devices publish a real bus/device id (topic segment or payload field).
+	DefaultBusID string
 }
 
 type KafkaConfig struct {
@@ -47,11 +51,12 @@ func Load() (*Config, error) {
 			Username:      mustEnv("MQTT_USERNAME"),
 			Password:      mustEnv("MQTT_PASSWORD"),
 			ClientID:      getEnv("MQTT_CLIENT_ID", "fleet-tracker-service"),
-			TopicPattern:  getEnv("MQTT_TOPIC_PATTERN", "fleet/+/gps"),
-			QoS:           byte(getEnvInt("MQTT_QOS", 1)),
+			TopicPattern:  getEnv("MQTT_TOPIC_PATTERN", "fleet/gps"),
+			QoS:           byte(getEnvInt("MQTT_QOS", 0)),
 			KeepAlive:     getEnvDuration("MQTT_KEEPALIVE", 30*time.Second),
 			TLSCACertPath: getEnv("MQTT_TLS_CA_CERT", "/certs/root.crt"),
 			ReconnectWait: getEnvDuration("MQTT_RECONNECT_WAIT", 5*time.Second),
+			DefaultBusID:  getEnv("MQTT_DEFAULT_BUS_ID", "BUS-001"),
 		},
 		Kafka: KafkaConfig{
 			Brokers: []string{getEnv("KAFKA_BROKER", "kafka:9092")},
